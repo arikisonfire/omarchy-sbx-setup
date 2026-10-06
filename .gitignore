@@ -1,0 +1,5 @@
+.cache/
+*.bak.*
+# app data from sbx-run.sh (XDG_CONFIG_HOME/XDG_DATA_HOME inside the project)
+apps/*/.config/
+apps/*/.local/
