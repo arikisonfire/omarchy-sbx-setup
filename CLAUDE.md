@@ -69,8 +69,8 @@ If a tool fails, call `status` first.
   the Omarchy shell. Only they may be on the stage. `stage_list` shows them
   with their addresses, `stage_window` moves one there.
 - If a foreign window is on the stage, or a sensitive overlay is open
-  (notification, clipboard, polkit, lock screen), the bridge refuses the
-  capture. That's intentional, not a bug.
+  (notification, clipboard, polkit, Wi-Fi QR code, reminders, lock screen),
+  the bridge refuses the capture. That's intentional, not a bug.
 - Every stage screenshot briefly switches the user's view. Take them
   purposefully, not in a loop.
 - `target=screen` and `target=geometry` only work if the user enabled them.

@@ -17,8 +17,9 @@ Design rules:
   their project folder, the Wayland display and the GPU; no home, no D-Bus,
   and no network unless the user registered the bridge with --app-network.
 - Screenshots of anything beyond the bar are taken on an empty workspace (the
-  stage, "sbx") that holds only development windows, and never while a
-  sensitive overlay (notifications, clipboard, polkit, lock) is visible.
+  stage, "sbx") that holds only development windows, and never while the
+  session is locked or a sensitive overlay (notifications, clipboard, polkit,
+  Wi-Fi QR code, reminders) is visible.
 - This file must live outside every folder mounted into a sandbox; otherwise
   the agent could rewrite its own bridge.
 
@@ -41,7 +42,7 @@ import tempfile
 import time
 from pathlib import Path
 
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 HOME = Path.home()
 PLUGINS_DIR = HOME / ".config/omarchy/plugins"
 STATE_DIR = HOME / ".local/state/omarchy-sbx-bridge"
@@ -61,7 +62,12 @@ APP_MARKER = "OMARCHY_SBX_APP"        # set in the environment of every app the 
 RUN_SCRIPT = "sbx-run.sh"             # entry point of an app project
 WEB_PREVIEW = "web-preview"           # APPS key of the preview browser
 SENSITIVE_LAYERS = ("omarchy-notifications", "omarchy-clipboard", "omarchy-polkit",
-                    "omarchy-lock", "omarchy-image-selector", "hyprlock")
+                    "omarchy-lock", "omarchy-image-selector", "omarchy-network-qr",
+                    "omarchy-reminders", "hyprlock")
+# Sensitive layers that stay mapped while they show nothing (Omarchy 4.5 keeps the
+# notification layer up when idle), with the shell IPC target that counts what is
+# on them. Such a layer counts as open whenever its count cannot be read.
+COUNTED_LAYERS = {"omarchy-notifications": "notifications"}
 OWN_SUMMARIES = ("Sandbox-Screenshot", "Sandbox-App gestartet", "Sandbox-Webvorschau")
 # Read-only extras so apps look like the rest of the desktop (theme, fonts, icons).
 LOOK_AND_FEEL = [HOME / ".config/gtk-3.0", HOME / ".config/gtk-4.0", HOME / ".config/fontconfig",
@@ -356,12 +362,31 @@ def find_client(address):
     return next((c for c in hypr_json("clients") if c.get("address") == address), None)
 
 
-def session_locked():
+def shell_answer(target, method):
+    """What an omarchy-shell IPC call printed, or None if it gave no answer."""
     try:
-        code, _out, _err = run(["omarchy-hyprland-session-locked"], timeout=5)
-        return code == 0
+        code, out, _err = run(["omarchy-shell", target, method], timeout=5)
     except (ToolError, OSError):
-        return False
+        return None
+    return out.strip() if code == 0 else None
+
+
+def lock_reason():
+    """Why the lock rules out a capture right now, or None. The compositor knows
+    every session lock, even one whose client died; the shell also knows a lock
+    that is still starting. Unless one of them says unlocked, assume locked."""
+    try:  # exits 0 locked, 1 unlocked, 2 undetermined
+        code, _out, _err = run(["omarchy-hyprland-session-locked"], timeout=5)
+    except (ToolError, OSError):
+        code = None
+    shell = shell_answer("lock", "isLocked")  # "true" or "false"
+    if code == 0:
+        return "the session is locked"
+    if shell == "true":
+        return "the lock screen is up or starting"
+    if code == 1 or shell == "false":
+        return None
+    return "could not tell whether the session is locked"
 
 
 def sensitive_layers():
@@ -382,33 +407,45 @@ def sensitive_layers():
     return sorted(found)
 
 
-def visible_toasts():
-    """Number of toasts omapager shows right now, or None if omapager is not
-    the notification daemon. Omapager keeps its layer mapped even when empty,
-    so the layer check alone cannot see its toasts."""
-    try:
-        code, out, _err = run(["omarchy-shell", "omapager", "count"], timeout=5)
-    except (ToolError, OSError):
-        return None
-    out = out.strip()
-    return int(out) if code == 0 and out.isdigit() else None
+def toast_count(target):
+    """Notification cards the daemon behind this IPC target shows right now
+    (omarchy-shell <target> count), or None if it gives no number."""
+    out = shell_answer(target, "count")
+    return int(out) if out and out.isascii() and out.isdigit() else None
+
+
+def screen_blockers():
+    """What is on screen right now that must not be captured."""
+    busy = []
+    for namespace in sensitive_layers():
+        target = COUNTED_LAYERS.get(namespace)
+        if not target:
+            busy.append(namespace)
+            continue
+        cards = toast_count(target)
+        if cards is None:
+            busy.append(f"{namespace} (omarchy-shell {target} count gave no number)")
+        elif cards:
+            busy.append(f"{cards} notification(s) on screen")
+    # Omapager keeps its own layer mapped even when empty, so only its count tells.
+    cards = toast_count("omapager")
+    if cards:
+        busy.append(f"{cards} omapager notification(s) on screen")
+    return busy
 
 
 def wait_until_private(timeout=8):
-    if session_locked():
-        raise ToolError("not captured: the session is locked")
+    reason = lock_reason()
+    if reason:
+        raise ToolError(f"not captured: {reason}")
+    for summary in OWN_SUMMARIES:  # our own notices may go; others must expire
+        try:
+            run(["omarchy-shell", "notifications", "dismiss", summary], timeout=5)
+        except (ToolError, OSError):
+            pass
     deadline = time.time() + timeout
     while True:
-        busy = sensitive_layers()
-        if visible_toasts():
-            for summary in OWN_SUMMARIES:  # our own notices may go; others must expire
-                try:
-                    run(["omarchy-shell", "notifications", "dismiss", summary], timeout=5)
-                except (ToolError, OSError):
-                    pass
-            toasts = visible_toasts()
-            if toasts:
-                busy.append(f"{toasts} notification(s) on screen")
+        busy = screen_blockers()
         if not busy:
             return
         if time.time() > deadline:
@@ -1111,7 +1148,8 @@ TOOLS = {
         f"target=stage: briefly switches to the empty workspace '{STAGE}' (only development windows "
         "allowed there), captures the whole monitor (bar, shell panels, staged apps), switches back. "
         "target=window: same, cropped to one development window (address). screen and geometry only if "
-        "the user allowed them. Waits while notifications, clipboard, polkit or lock overlays are open. "
+        "the user allowed them. Refuses while the session is locked; waits while a notification, the "
+        "clipboard, a polkit prompt, the Wi-Fi QR code or the reminder prompt is on screen. "
         "The user gets a notification for every capture.",
         {"type": "object", "additionalProperties": False, "properties": {
             "target": {"type": "string", "enum": ["bar", "stage", "window", "screen", "geometry"],

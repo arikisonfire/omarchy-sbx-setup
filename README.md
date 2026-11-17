@@ -62,7 +62,7 @@ entire trust boundary.
 |---|---|---|
 | Shell | restart it, list or rescan plugins, call a plugin's IPC, read the shell log | IPC only for plugins in `~/.config/omarchy/plugins` |
 | Checks | `qmllint`, plugin validation, Hyprland reload and read-only queries | lint and validation run on copies made without following symlinks |
-| Screenshots | the bar, or the whole screen while the `sbx` workspace (the stage) is shown | the stage may hold only the shell and apps the bridge started; nothing is captured while the screen is locked or a notification, the clipboard, polkit or the image picker is open; whole-screen and region captures only with `--allow-fullscreen` |
+| Screenshots | the bar, or the whole screen while the `sbx` workspace (the stage) is shown | the stage may hold only the shell and apps the bridge started; nothing is captured while the screen is locked or a notification, the clipboard, polkit, the image picker, the Wi-Fi QR code or the reminder prompt is open; whole-screen and region captures only with `--allow-fullscreen` |
 | Apps | start `apps/<name>/sbx-run.sh`, read its output, stop it | bubblewrap with its project folder, `/usr`, `/etc`, the GPU, the display, and your theme and fonts read-only; an empty home, no D-Bus, no audio, no network unless `--app-network` |
 | Web preview | publish a sandbox port on `127.0.0.1` and open it | separate Chromium profile |
 | Host check | whether packages or commands exist | read-only |
@@ -78,7 +78,7 @@ Every call is logged to `~/.local/state/omarchy-sbx-bridge/bridge.log`.
 - `sbx diagnose` reports virtualization OK, and `sbx login` is done.
 
 Tested on a MacBook Air M2 with Omarchy 4.0.4 (Asahi, aarch64), `sbx` 0.47.0
-and Claude Code.
+and Claude Code. Bridge 1.1.3 also on Omarchy 4.5.0 with `sbx` 0.54.0.
 
 ## Quick start
 
