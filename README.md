@@ -56,7 +56,9 @@ Omarchy commands and how the agent uses them.
 only) that runs on the host with your permissions. It offers a fixed list of
 tools and cannot run anything else. Every tool runs a fixed command, nothing
 goes through a shell, and every argument is checked. Read it: it is the
-entire trust boundary.
+only way the sandbox acts on the host directly. It is not the only way the
+agent's work gets there, see [What the sandbox does not
+protect](#what-the-sandbox-does-not-protect).
 
 | Area | What the agent can do | Limits |
 |---|---|---|
@@ -69,6 +71,36 @@ entire trust boundary.
 
 A stage screenshot switches your view to the stage for a moment and back.
 Every call is logged to `~/.local/state/omarchy-sbx-bridge/bridge.log`.
+
+## What the sandbox does not protect
+
+The sandbox keeps the rest of your files out of the agent's reach, and its
+commands run inside the VM. Code the agent writes can still run on your
+host, because some of the read-write folders hold files your desktop runs
+with your permissions:
+
+- **Plugins** in `~/.config/omarchy/plugins` are QML and JavaScript that can
+  start any program. The shell reloads them as soon as a file changes.
+- **Hooks** in `~/.config/omarchy/hooks` are scripts Omarchy runs on events
+  such as boot, a theme change or `omarchy update`. Update hooks run inside
+  the update's `sudo` authorization, so they can use `sudo` without asking.
+- **The Hyprland config** in `~/.config/hypr` is Lua that can start
+  programs. It runs at login and on every reload, which the bridge can
+  trigger.
+- **This repo:** any script you run from it on the host, the setup script
+  included. Git commands you run here on the host also read `.git/config`
+  and `.git/hooks`, and both can start programs.
+
+`CLAUDE.md` asks the agent to leave the hooks and the git config alone, but
+that is an instruction, not a barrier. The sandbox limits the damage an
+agent can do by mistake. It does not stop an agent that has been talked into
+harm, for example by a prompt injection in a page it read. So:
+
+- Look over what the agent changes in these folders, new hooks above all.
+- Run git for this repo inside the sandbox, or read `.git/config` and
+  `.git/hooks` before you run git here on the host.
+- Review `bridge.py` and the setup script before you re-run the setup
+  ([how](#why-bridgepy-lives-outside-the-repo-at-runtime)).
 
 ## Prerequisites
 
@@ -136,12 +168,14 @@ inside it can edit anything here, including this copy of `bridge.py`.
 `bridge.py` is what grants the sandbox session its (narrowly scoped) access
 to the host; if the copy it actually runs sat inside a mounted folder, a
 sandboxed agent could rewrite the very script that will next run with host
-access, defeating the sandbox entirely. So the setup script copies it to
+access, and the bridge would no longer be the code you reviewed. So the
+setup script copies it to
 `~/.local/share/omarchy-sbx-bridge/bridge.py` — outside every mounted folder
 — once, before the sandbox first starts, and the running MCP server always
 reads from there, never from the repo.
 
-If you update `bridge.py` in this repo later, review the diff, then delete
+If you update `bridge.py` in this repo later, review its diff and the diff
+of `setup-omarchy-sandbox.sh` (the sandbox can write both), then delete
 `~/.local/share/omarchy-sbx-bridge/bridge.py` and re-run the setup script to
 pick up the change — don't automate that step from inside a sandbox session.
 
